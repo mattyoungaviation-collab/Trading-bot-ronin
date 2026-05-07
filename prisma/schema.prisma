@@ -78,7 +78,7 @@ model Quote {
 model TradeDecision {
   id                    Int       @id @default(autoincrement())
   tokenId               Int
-  mode                  BotMode
+  mode                  String
   accepted              Boolean
   reasons               String
   tradeScore            Float
