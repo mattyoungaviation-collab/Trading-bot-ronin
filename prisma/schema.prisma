@@ -7,21 +7,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum BotMode {
-  OFF
-  WATCH
-  PAPER
-  LIVE
-}
 
-enum PoolType {
-  KATANA_V2
-  KATANA_V3
-}
 
 model Settings {
   id                        Int      @id @default(1)
-  botMode                   BotMode  @default(OFF)
+  botMode                   String   @default("OFF")
   maxTradeSizeUsd           Float    @default(25)
   minExpectedProfitPct      Float    @default(2)
   takeProfitPct             Float    @default(5)
@@ -57,7 +47,7 @@ model Token {
   decimals         Int
   logoUrl          String?
   pairAddress      String?
-  poolType         PoolType
+  poolType         String
   baseToken        String
   isActive         Boolean   @default(true)
   notes            String?
@@ -68,7 +58,7 @@ model Pool {
   id               Int       @id @default(autoincrement())
   tokenId          Int
   poolAddress      String
-  poolType         PoolType
+  poolType         String
   liquidityUsd     Float
   volume24hUsd     Float
   updatedAt        DateTime  @updatedAt
