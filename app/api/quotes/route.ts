@@ -16,6 +16,18 @@ const V2_PAIR_ABI = [
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
 ];
 
+const V3_POOL_ABI = [
+  "function token0() view returns (address)",
+  "function token1() view returns (address)",
+  "function fee() view returns (uint24)",
+  "function liquidity() view returns (uint128)",
+  "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)",
+];
+
+const V3_QUOTER_ABI = [
+  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
+];
+
 function isAddress(value: string | null | undefined) {
   return !!value && value.startsWith("0x") && value.length === 42;
 }
@@ -26,10 +38,21 @@ function constantProductAmountOut(amountIn: number, reserveIn: number, reserveOu
   return (amountInWithFee * reserveOut) / (reserveIn + amountInWithFee);
 }
 
+function priceImpactFromSpot(spotOut: number, amountOut: number) {
+  if (spotOut <= 0 || amountOut <= 0) return 100;
+  return Math.max(0, ((spotOut - amountOut) / spotOut) * 100);
+}
+
 function priceImpactPct(amountIn: number, reserveIn: number, reserveOut: number, amountOut: number) {
   if (amountIn <= 0 || reserveIn <= 0 || reserveOut <= 0 || amountOut <= 0) return 100;
   const spotOut = amountIn * (reserveOut / reserveIn);
-  return Math.max(0, ((spotOut - amountOut) / spotOut) * 100);
+  return priceImpactFromSpot(spotOut, amountOut);
+}
+
+function humanPriceToken1PerToken0(sqrtPriceX96: bigint, decimals0: number, decimals1: number) {
+  const ratio = Number(sqrtPriceX96) / 2 ** 96;
+  const rawPrice = ratio * ratio;
+  return rawPrice * 10 ** decimals0 / 10 ** decimals1;
 }
 
 async function quoteV2(token: any, settings: any, provider: JsonRpcProvider) {
@@ -118,6 +141,119 @@ async function quoteV2(token: any, settings: any, provider: JsonRpcProvider) {
   };
 }
 
+async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
+  const quoterAddress = process.env.KATANA_V3_QUOTER_ADDRESS;
+
+  if (!isAddress(quoterAddress)) {
+    throw new Error("Missing KATANA_V3_QUOTER_ADDRESS environment variable. Add the verified Ronin Katana V3 quoter address in Render before quoting V3 pools.");
+  }
+  if (!isAddress(token.pairAddress)) {
+    throw new Error("Missing or invalid V3 pool address.");
+  }
+  if (!isAddress(token.baseTokenAddress)) {
+    throw new Error("Missing base token address. Add it in /tokens before quoting.");
+  }
+  if (!token.feeTier) {
+    throw new Error("Missing V3 fee tier. Add feeTier in /tokens, for example 500, 3000, or 10000 if that matches the pool.");
+  }
+
+  const pool = new Contract(token.pairAddress, V3_POOL_ABI, provider);
+  const quoter = new Contract(quoterAddress, V3_QUOTER_ABI, provider);
+  const tokenContract = new Contract(token.contractAddress, ERC20_ABI, provider);
+  const baseContract = new Contract(token.baseTokenAddress, ERC20_ABI, provider);
+
+  const [poolToken0, poolToken1, poolFee, poolLiquidity, slot0, chainTokenDecimals, baseDecimals] = await Promise.all([
+    pool.token0(),
+    pool.token1(),
+    pool.fee(),
+    pool.liquidity(),
+    pool.slot0(),
+    tokenContract.decimals(),
+    baseContract.decimals(),
+  ]);
+
+  const tokenAddress = token.contractAddress.toLowerCase();
+  const baseAddress = token.baseTokenAddress.toLowerCase();
+  const token0Lower = String(poolToken0).toLowerCase();
+  const token1Lower = String(poolToken1).toLowerCase();
+
+  if (!((token0Lower === tokenAddress && token1Lower === baseAddress) || (token1Lower === tokenAddress && token0Lower === baseAddress))) {
+    throw new Error("V3 pool does not contain the configured token/base token addresses.");
+  }
+
+  if (Number(poolFee) !== Number(token.feeTier)) {
+    throw new Error(`Configured feeTier ${token.feeTier} does not match pool fee ${Number(poolFee)}.`);
+  }
+
+  const amountInBase = Number(settings?.maxTradeSizeUsd || 25);
+  const amountInRaw = parseUnits(String(amountInBase), Number(baseDecimals));
+  const buyQuote = await quoter.quoteExactInputSingle.staticCall({
+    tokenIn: token.baseTokenAddress,
+    tokenOut: token.contractAddress,
+    amountIn: amountInRaw,
+    fee: Number(token.feeTier),
+    sqrtPriceLimitX96: 0,
+  });
+
+  const amountOutToken = Number(formatUnits(buyQuote.amountOut, Number(chainTokenDecimals)));
+
+  const sellAmountRaw = parseUnits(String(amountOutToken), Number(chainTokenDecimals));
+  const sellQuote = await quoter.quoteExactInputSingle.staticCall({
+    tokenIn: token.contractAddress,
+    tokenOut: token.baseTokenAddress,
+    amountIn: sellAmountRaw,
+    fee: Number(token.feeTier),
+    sqrtPriceLimitX96: 0,
+  });
+
+  const sellBackBase = Number(formatUnits(sellQuote.amountOut, Number(baseDecimals)));
+
+  const price1Per0 = humanPriceToken1PerToken0(BigInt(slot0.sqrtPriceX96), token0Lower === baseAddress ? Number(baseDecimals) : Number(chainTokenDecimals), token0Lower === baseAddress ? Number(chainTokenDecimals) : Number(baseDecimals));
+  const spotOut = token0Lower === baseAddress ? amountInBase * price1Per0 : amountInBase / price1Per0;
+  const buyImpact = priceImpactFromSpot(spotOut, amountOutToken);
+  const roundTripImpact = Math.max(0, ((amountInBase - sellBackBase) / amountInBase) * 100);
+  const sellImpact = roundTripImpact;
+  const priceBasePerToken = amountOutToken > 0 ? amountInBase / amountOutToken : 0;
+  const confidence = amountOutToken > 0 && sellBackBase > 0 ? Math.max(0, 100 - roundTripImpact) : 0;
+
+  const saved = await prisma.quote.create({
+    data: {
+      tokenId: token.id,
+      side: "BUY",
+      amountIn: String(amountInBase),
+      amountOut: String(amountOutToken),
+      priceImpactPct: buyImpact,
+      roundTripImpactPct: roundTripImpact,
+      liquidityUsd: 0,
+      quoteSource: "KATANA_V3_QUOTER",
+      confidence,
+    },
+  });
+
+  return {
+    ok: true,
+    token,
+    quote: saved,
+    metrics: {
+      priceBasePerToken,
+      tokenReserve: Number(poolLiquidity),
+      baseReserve: 0,
+      amountInBase,
+      amountOutToken,
+      buyImpact,
+      sellImpact,
+      roundTripImpact,
+      estimatedSellBackBase: sellBackBase,
+      liquidityApproxBase: 0,
+      confidence,
+      poolFee: Number(poolFee),
+      initializedTicksCrossed: Number(buyQuote.initializedTicksCrossed),
+      gasEstimate: Number(buyQuote.gasEstimate),
+    },
+    message: "V3 quote calculated with QuoterV2. Liquidity uses V3 active liquidity, not simple reserves.",
+  };
+}
+
 async function quoteToken(token: any, settings: any, provider: JsonRpcProvider) {
   if (!token.isActive) {
     return { ok: false, token, message: "Token inactive.", metrics: null };
@@ -132,12 +268,7 @@ async function quoteToken(token: any, settings: any, provider: JsonRpcProvider) 
   }
 
   if (token.poolType === "KATANA_V3") {
-    return {
-      ok: false,
-      token,
-      message: "KATANA_V3 needs quoter contract wiring. Add feeTier now, then wire V3Quoter next.",
-      metrics: null,
-    };
+    return quoteV3(token, settings, provider);
   }
 
   return { ok: false, token, message: `Unsupported pool type ${token.poolType}.`, metrics: null };
