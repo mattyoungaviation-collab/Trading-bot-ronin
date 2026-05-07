@@ -7,8 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
-
 model Settings {
   id                        Int      @id @default(1)
   botMode                   String   @default("OFF")
@@ -40,18 +38,20 @@ model Settings {
 }
 
 model Token {
-  id               Int       @id @default(autoincrement())
-  name             String
-  symbol           String
-  contractAddress  String    @unique
-  decimals         Int
-  logoUrl          String?
-  pairAddress      String?
-  poolType         String
-  baseToken        String
-  isActive         Boolean   @default(true)
-  notes            String?
-  createdAt        DateTime  @default(now())
+  id                Int       @id @default(autoincrement())
+  name              String
+  symbol            String
+  contractAddress   String    @unique
+  decimals          Int
+  logoUrl           String?
+  pairAddress       String?
+  poolType          String
+  baseToken         String
+  baseTokenAddress  String?
+  feeTier           Int?
+  isActive          Boolean   @default(true)
+  notes             String?
+  createdAt         DateTime  @default(now())
 }
 
 model Pool {
@@ -65,14 +65,17 @@ model Pool {
 }
 
 model Quote {
-  id               Int       @id @default(autoincrement())
-  tokenId          Int
-  side             String
-  amountIn         String
-  amountOut        String
-  priceImpactPct   Float
-  confidence       Float
-  createdAt        DateTime  @default(now())
+  id                  Int       @id @default(autoincrement())
+  tokenId             Int
+  side                String
+  amountIn            String
+  amountOut           String
+  priceImpactPct      Float
+  roundTripImpactPct  Float?    @default(0)
+  liquidityUsd        Float?    @default(0)
+  quoteSource         String?   @default("UNKNOWN")
+  confidence          Float
+  createdAt           DateTime  @default(now())
 }
 
 model TradeDecision {
