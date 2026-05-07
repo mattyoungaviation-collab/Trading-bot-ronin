@@ -18,6 +18,11 @@ function toInt(value: unknown, fallback: number) {
   return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
 }
 
+function toNullableInt(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : null;
+}
+
 function toBoolean(value: unknown, fallback: boolean) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return value === "true";
@@ -44,6 +49,7 @@ export async function POST(request: Request) {
   const symbol = cleanText(body.symbol).toUpperCase();
   const name = cleanText(body.name);
   const baseToken = cleanText(body.baseToken).toUpperCase();
+  const baseTokenAddress = cleanAddress(body.baseTokenAddress);
 
   if (!contractAddress || !symbol || !name || !baseToken) {
     return NextResponse.json(
@@ -52,30 +58,26 @@ export async function POST(request: Request) {
     );
   }
 
+  const commonData = {
+    name,
+    symbol,
+    decimals: toInt(body.decimals, 18),
+    logoUrl: cleanText(body.logoUrl) || null,
+    pairAddress: cleanText(body.pairAddress) || null,
+    poolType: normalizePoolType(body.poolType),
+    baseToken,
+    baseTokenAddress: baseTokenAddress || null,
+    feeTier: toNullableInt(body.feeTier),
+    isActive: toBoolean(body.isActive, true),
+    notes: cleanText(body.notes) || null,
+  };
+
   const token = await prisma.token.upsert({
     where: { contractAddress },
-    update: {
-      name,
-      symbol,
-      decimals: toInt(body.decimals, 18),
-      logoUrl: cleanText(body.logoUrl) || null,
-      pairAddress: cleanText(body.pairAddress) || null,
-      poolType: normalizePoolType(body.poolType),
-      baseToken,
-      isActive: toBoolean(body.isActive, true),
-      notes: cleanText(body.notes) || null,
-    },
+    update: commonData,
     create: {
-      name,
-      symbol,
+      ...commonData,
       contractAddress,
-      decimals: toInt(body.decimals, 18),
-      logoUrl: cleanText(body.logoUrl) || null,
-      pairAddress: cleanText(body.pairAddress) || null,
-      poolType: normalizePoolType(body.poolType),
-      baseToken,
-      isActive: toBoolean(body.isActive, true),
-      notes: cleanText(body.notes) || null,
     },
   });
 
