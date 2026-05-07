@@ -1,0 +1,1 @@
+'use client'; export function TokenSelector(){return <section className='border rounded p-3'><h2 className='font-semibold'>Token Selector</h2><input className='border p-1 w-full' placeholder='0x token address'/></section>;}

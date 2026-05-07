@@ -1,0 +1,2 @@
+import { Contract } from 'ethers'; import { provider } from './provider'; import { KATANA_CONTRACTS } from '@/config/networks'; import { KATANA_V3_QUOTER_ABI } from './contracts';
+export async function quoteV3(tokenIn:string,tokenOut:string,fee:number,amountIn:bigint){const q=new Contract(KATANA_CONTRACTS.V3QuoterV2,KATANA_V3_QUOTER_ABI,provider);return q.quoteExactInputSingle([tokenIn,tokenOut,amountIn,fee,0]);}

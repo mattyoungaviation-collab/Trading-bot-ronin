@@ -1,0 +1,2 @@
+export type ScoreInput={expectedProfitPct:number;liquidityUsd:number;buyImpactPct:number;sellImpactPct:number;volume24hUsd:number;volatility:number;spreadPct:number;confidence:number};
+export function scoreTrade(i:ScoreInput){const s=Math.max(0,Math.min(100,i.expectedProfitPct*8+i.confidence*0.2+Math.log10(Math.max(i.liquidityUsd,1))*10+Math.log10(Math.max(i.volume24hUsd,1))*5-i.buyImpactPct*6-i.sellImpactPct*6-i.volatility*4-i.spreadPct*3));return Number(s.toFixed(2));}
