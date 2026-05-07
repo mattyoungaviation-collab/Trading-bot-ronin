@@ -13,6 +13,12 @@ function toInt(value: unknown, fallback: number) {
   return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
 }
 
+function toNullableInt(value: unknown, fallback: number | null) {
+  if (value === "" || value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
+}
+
 function toBoolean(value: unknown, fallback: boolean) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return value === "true";
@@ -47,6 +53,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
       pairAddress: cleanText(body.pairAddress) || null,
       poolType: normalizePoolType(body.poolType || current.poolType),
       baseToken: cleanText(body.baseToken).toUpperCase() || current.baseToken,
+      baseTokenAddress: cleanText(body.baseTokenAddress) || null,
+      feeTier: toNullableInt(body.feeTier, current.feeTier),
       isActive: toBoolean(body.isActive, current.isActive),
       notes: cleanText(body.notes) || null,
     },
