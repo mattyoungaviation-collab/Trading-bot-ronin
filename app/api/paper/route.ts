@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const prisma = new PrismaClient();
 
 export async function GET() {
@@ -25,6 +28,8 @@ export async function GET() {
       closedTrades: paperTrades.filter((trade) => trade.status === "CLOSED").length,
       realizedPnl: paperTrades.reduce((sum, trade) => sum + trade.pnl, 0),
     },
+  }, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
   });
 }
 
@@ -86,5 +91,7 @@ export async function POST() {
     created.push({ ...trade, token });
   }
 
-  return NextResponse.json({ created, rejected });
+  return NextResponse.json({ created, rejected }, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
+  });
 }
