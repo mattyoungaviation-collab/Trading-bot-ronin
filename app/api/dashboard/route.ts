@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { JsonRpcProvider } from "ethers";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const prisma = new PrismaClient();
 
 async function getRpcStatus() {
@@ -91,5 +94,7 @@ export async function GET() {
       token: event.tokenId ? tokenMap.get(event.tokenId) || null : null,
     })),
     botLogs,
+  }, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
   });
 }
