@@ -12,6 +12,8 @@ type Token = {
   pairAddress: string | null;
   poolType: string;
   baseToken: string;
+  baseTokenAddress: string | null;
+  feeTier: number | null;
   isActive: boolean;
   notes: string | null;
   createdAt: string;
@@ -26,6 +28,8 @@ type TokenForm = {
   pairAddress: string;
   poolType: string;
   baseToken: string;
+  baseTokenAddress: string;
+  feeTier: string;
   isActive: boolean;
   notes: string;
 };
@@ -37,8 +41,10 @@ const emptyForm: TokenForm = {
   decimals: "18",
   logoUrl: "",
   pairAddress: "",
-  poolType: "KATANA_V2",
-  baseToken: "RON",
+  poolType: "KATANA_V3",
+  baseToken: "USDC",
+  baseTokenAddress: "",
+  feeTier: "3000",
   isActive: true,
   notes: "",
 };
@@ -68,6 +74,24 @@ export default function TokensPage() {
     setForm({ ...form, [key]: value });
   }
 
+  function loadTokenIntoForm(token: Token) {
+    setForm({
+      name: token.name,
+      symbol: token.symbol,
+      contractAddress: token.contractAddress,
+      decimals: String(token.decimals),
+      logoUrl: token.logoUrl || "",
+      pairAddress: token.pairAddress || "",
+      poolType: token.poolType,
+      baseToken: token.baseToken,
+      baseTokenAddress: token.baseTokenAddress || "",
+      feeTier: token.feeTier ? String(token.feeTier) : "",
+      isActive: token.isActive,
+      notes: token.notes || "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   async function saveToken() {
     setSaving(true);
     setStatus("Saving token...");
@@ -75,7 +99,11 @@ export default function TokensPage() {
       const response = await fetch("/api/tokens", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, decimals: Number(form.decimals) }),
+        body: JSON.stringify({
+          ...form,
+          decimals: Number(form.decimals),
+          feeTier: form.feeTier ? Number(form.feeTier) : null,
+        }),
       });
 
       const data = await response.json();
@@ -125,9 +153,12 @@ export default function TokensPage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <div>
           <h1 style={{ marginBottom: 8 }}>Token Selector</h1>
-          <p style={{ marginTop: 0, color: "#555" }}>Add tokens the bot is allowed to watch. Keep inactive until you have verified the pool and contract.</p>
+          <p style={{ marginTop: 0, color: "#555" }}>Add tokens the bot is allowed to watch. For V3, add the pool address, base token address, and fee tier.</p>
         </div>
-        <a href="/settings" style={{ color: "#111", fontWeight: 700 }}>Settings</a>
+        <div style={{ display: "flex", gap: 12 }}>
+          <a href="/quotes" style={{ color: "#111", fontWeight: 700 }}>Quotes</a>
+          <a href="/settings" style={{ color: "#111", fontWeight: 700 }}>Settings</a>
+        </div>
       </div>
 
       <section style={{ border: "1px solid #ddd", borderRadius: 14, padding: 18, margin: "20px 0", background: "#f8fafc" }}>
@@ -146,7 +177,7 @@ export default function TokensPage() {
             <input value={form.symbol} onChange={(e) => updateForm("symbol", e.target.value)} style={inputStyle} placeholder="DYN" />
           </label>
           <label>
-            <strong>Contract Address</strong>
+            <strong>Token Contract Address</strong>
             <input value={form.contractAddress} onChange={(e) => updateForm("contractAddress", e.target.value)} style={inputStyle} placeholder="0x..." />
           </label>
           <label>
@@ -155,7 +186,7 @@ export default function TokensPage() {
           </label>
           <label>
             <strong>Pair or Pool Address</strong>
-            <input value={form.pairAddress} onChange={(e) => updateForm("pairAddress", e.target.value)} style={inputStyle} placeholder="0x... optional" />
+            <input value={form.pairAddress} onChange={(e) => updateForm("pairAddress", e.target.value)} style={inputStyle} placeholder="0x..." />
           </label>
           <label>
             <strong>Pool Type</strong>
@@ -165,8 +196,16 @@ export default function TokensPage() {
             </select>
           </label>
           <label>
-            <strong>Base Token</strong>
-            <input value={form.baseToken} onChange={(e) => updateForm("baseToken", e.target.value)} style={inputStyle} placeholder="RON" />
+            <strong>Base Token Symbol</strong>
+            <input value={form.baseToken} onChange={(e) => updateForm("baseToken", e.target.value)} style={inputStyle} placeholder="USDC" />
+          </label>
+          <label>
+            <strong>Base Token Address</strong>
+            <input value={form.baseTokenAddress} onChange={(e) => updateForm("baseTokenAddress", e.target.value)} style={inputStyle} placeholder="0x... Ronin USDC, RON, AXS, etc." />
+          </label>
+          <label>
+            <strong>V3 Fee Tier</strong>
+            <input type="number" value={form.feeTier} onChange={(e) => updateForm("feeTier", e.target.value)} style={inputStyle} placeholder="500, 3000, 10000" />
           </label>
           <label>
             <strong>Logo URL</strong>
@@ -196,12 +235,14 @@ export default function TokensPage() {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                 <div>
                   <h3 style={{ margin: 0 }}>{token.symbol} · {token.name}</h3>
-                  <p style={{ margin: "8px 0", color: "#555" }}>{token.poolType} / Base: {token.baseToken} / Decimals: {token.decimals}</p>
+                  <p style={{ margin: "8px 0", color: "#555" }}>{token.poolType} / Base: {token.baseToken} / Fee Tier: {token.feeTier || "None"} / Decimals: {token.decimals}</p>
                   <p style={{ margin: "8px 0", overflowWrap: "anywhere" }}><strong>Contract:</strong> {token.contractAddress}</p>
+                  <p style={{ margin: "8px 0", overflowWrap: "anywhere" }}><strong>Base Address:</strong> {token.baseTokenAddress || "Not set"}</p>
                   <p style={{ margin: "8px 0", overflowWrap: "anywhere" }}><strong>Pool:</strong> {token.pairAddress || "Not set"}</p>
                   {token.notes ? <p style={{ margin: "8px 0" }}><strong>Notes:</strong> {token.notes}</p> : null}
                 </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "start" }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "start", flexWrap: "wrap" }}>
+                  <button onClick={() => loadTokenIntoForm(token)} style={smallButtonStyle}>Edit</button>
                   <button onClick={() => toggleActive(token)} style={smallButtonStyle}>{token.isActive ? "Deactivate" : "Activate"}</button>
                   <button onClick={() => deleteToken(token)} style={dangerButtonStyle}>Delete</button>
                 </div>
