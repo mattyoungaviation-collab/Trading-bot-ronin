@@ -57,7 +57,7 @@ export default function TokensPage() {
 
   async function loadTokens() {
     try {
-      const response = await fetch("/api/tokens");
+      const response = await fetch("/api/tokens", { cache: "no-store" });
       const data = await response.json();
       setTokens(data);
       setStatus(data.length ? "Tokens loaded." : "No tokens added yet.");
@@ -98,6 +98,7 @@ export default function TokensPage() {
     try {
       const response = await fetch("/api/tokens", {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
@@ -124,6 +125,7 @@ export default function TokensPage() {
     try {
       const response = await fetch(`/api/tokens/${token.id}`, {
         method: "PATCH",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...token, isActive: !token.isActive }),
       });
@@ -140,7 +142,7 @@ export default function TokensPage() {
 
     setStatus(`Deleting ${token.symbol}...`);
     try {
-      const response = await fetch(`/api/tokens/${token.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/tokens/${token.id}`, { method: "DELETE", cache: "no-store" });
       if (!response.ok) throw new Error("Delete failed.");
       await loadTokens();
     } catch (error) {
