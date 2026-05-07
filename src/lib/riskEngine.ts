@@ -1,0 +1,20 @@
+export type Settings=any; export type Context=any;
+export function validateTrade(s:Settings,c:Context){const reasons:string[]=[];
+if(s.botMode!=='LIVE'&&c.mode==='LIVE') reasons.push('live mode disabled');
+if(s.emergencyStop) reasons.push('emergency stop active');
+if(c.buyImpactPct>s.maxBuyImpactPct) reasons.push('impact too high');
+if(c.sellImpactPct>s.maxSellImpactPct) reasons.push('exit impact too high');
+if(c.buyImpactPct+c.sellImpactPct>s.maxRoundTripImpactPct) reasons.push('round trip impact too high');
+if(c.poolLiquidityUsd<s.minPoolLiquidityUsd) reasons.push('liquidity too low');
+if(c.exitLiquidityUsd<s.minExitLiquidityUsd) reasons.push('exit liquidity too low');
+if(c.volume24hUsd<s.minRecentVolumeUsd) reasons.push('recent volume too low');
+if(c.slippagePct>s.maxSlippagePct) reasons.push('slippage too high');
+if(c.expectedProfitPct<s.minExpectedProfitPct) reasons.push('expected profit too small');
+if(c.dailyLossUsd>=s.maxDailyLossUsd) reasons.push('daily loss limit hit');
+if(c.cooldownActive) reasons.push('cooldown active');
+if(c.blacklisted) reasons.push('token blacklisted');
+if(s.whitelistOnly && !c.whitelisted) reasons.push('token not whitelisted');
+if(c.walletExposurePct>s.maxWalletExposurePct||c.tokenExposurePct>s.maxTokenExposurePct) reasons.push('wallet exposure too high');
+if(s.requireManualApproval&&c.mode==='LIVE'&&!c.manualApproval) reasons.push('manual approval required');
+if(c.tradeScore<s.minTradeScore) reasons.push('trade score below minimum');
+return {accepted:reasons.length===0,reasons};}

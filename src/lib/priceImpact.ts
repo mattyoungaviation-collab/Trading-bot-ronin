@@ -1,0 +1,2 @@
+export function calcV2AmountOut(amountIn:number,reserveIn:number,reserveOut:number,fee=0.003){const inWithFee=amountIn*(1-fee);return (inWithFee*reserveOut)/(reserveIn+inWithFee);}
+export function calcV2PriceImpactPct(amountIn:number,reserveIn:number,reserveOut:number){const spot=reserveOut/reserveIn;const out=calcV2AmountOut(amountIn,reserveIn,reserveOut);const exec=out/amountIn;return Math.max(0,((spot-exec)/spot)*100);}

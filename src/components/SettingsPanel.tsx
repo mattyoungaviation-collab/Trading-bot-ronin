@@ -1,0 +1,1 @@
+'use client'; export function SettingsPanel(){return <section className='border rounded p-3'><h2 className='font-semibold'>Settings</h2><p>Editable risk, liquidity and mode controls persisted via API.</p></section>;}

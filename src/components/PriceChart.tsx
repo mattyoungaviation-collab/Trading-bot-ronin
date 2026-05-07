@@ -1,0 +1,1 @@
+'use client'; import { LineChart,Line,XAxis,YAxis,Tooltip,ResponsiveContainer } from 'recharts'; const d=[{t:'1',p:1},{t:'2',p:1.2}]; export function PriceChart(){return <div className='h-56 border rounded p-2'><ResponsiveContainer><LineChart data={d}><XAxis dataKey='t'/><YAxis/><Tooltip/><Line dataKey='p' stroke='#2563eb'/></LineChart></ResponsiveContainer></div>;}

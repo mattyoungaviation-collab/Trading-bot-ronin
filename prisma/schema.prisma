@@ -1,0 +1,16 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "sqlite" url = env("DATABASE_URL") }
+
+enum BotMode { OFF WATCH PAPER LIVE }
+enum PoolType { KATANA_V2 KATANA_V3 }
+
+model Settings { id Int @id @default(1) botMode BotMode @default(OFF) maxTradeSizeUsd Float @default(25) minExpectedProfitPct Float @default(2) takeProfitPct Float @default(5) stopLossPct Float @default(2) trailingStopPct Float @default(1.5) cooldownSec Int @default(300) maxOpenPositionsPerToken Int @default(1) maxDailyTrades Int @default(10) maxBuyImpactPct Float @default(1) maxSellImpactPct Float @default(1) maxRoundTripImpactPct Float @default(2) minPoolLiquidityUsd Float @default(5000) minExitLiquidityUsd Float @default(5000) minRecentVolumeUsd Float @default(1000) maxSlippagePct Float @default(0.7) minQuoteConfidence Float @default(60) minTradeScore Float @default(70) maxDailyLossUsd Float @default(50) maxWalletExposurePct Float @default(15) maxTokenExposurePct Float @default(5) emergencyStopLossPct Float @default(8) whitelistOnly Boolean @default(false) requireManualApproval Boolean @default(true) allowUnlimitedApproval Boolean @default(false) emergencyStop Boolean @default(false)}
+model Token { id Int @id @default(autoincrement()) name String symbol String contractAddress String @unique decimals Int logoUrl String? pairAddress String? poolType PoolType baseToken String isActive Boolean @default(true) notes String? createdAt DateTime @default(now()) }
+model Pool { id Int @id @default(autoincrement()) tokenId Int poolAddress String poolType PoolType liquidityUsd Float volume24hUsd Float updatedAt DateTime @updatedAt }
+model Quote { id Int @id @default(autoincrement()) tokenId Int side String amountIn String amountOut String priceImpactPct Float confidence Float createdAt DateTime @default(now()) }
+model TradeDecision { id Int @id @default(autoincrement()) tokenId Int mode BotMode accepted Boolean reasons String tradeScore Float expectedProfitPct Float createdAt DateTime @default(now()) }
+model PaperTrade { id Int @id @default(autoincrement()) tokenId Int side String entryPrice Float qty Float status String pnl Float @default(0) createdAt DateTime @default(now()) }
+model LiveTrade { id Int @id @default(autoincrement()) tokenId Int side String txHash String? status String pnl Float @default(0) createdAt DateTime @default(now()) }
+model Position { id Int @id @default(autoincrement()) tokenId Int qty Float avgEntry Float realizedPnl Float @default(0) unrealizedPnl Float @default(0) open Boolean @default(true) updatedAt DateTime @updatedAt }
+model RiskEvent { id Int @id @default(autoincrement()) tokenId Int? reason String severity String createdAt DateTime @default(now()) }
+model BotLog { id Int @id @default(autoincrement()) level String message String meta String? createdAt DateTime @default(now()) }
