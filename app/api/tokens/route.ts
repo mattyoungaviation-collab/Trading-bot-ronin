@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const prisma = new PrismaClient();
 
 const allowedPoolTypes = new Set(["KATANA_V2", "KATANA_V3"]);
@@ -39,7 +42,9 @@ export async function GET() {
     orderBy: [{ isActive: "desc" }, { symbol: "asc" }],
   });
 
-  return NextResponse.json(tokens);
+  return NextResponse.json(tokens, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
+  });
 }
 
 export async function POST(request: Request) {
@@ -81,5 +86,7 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.json(token);
+  return NextResponse.json(token, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
+  });
 }
