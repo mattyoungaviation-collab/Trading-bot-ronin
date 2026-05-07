@@ -28,6 +28,28 @@ const V3_QUOTER_ABI = [
   "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
 ];
 
+const DEFAULT_RPC_URLS = [
+  "https://api.roninchain.com/rpc",
+  "https://ronin.lgns.net/rpc",
+];
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getRpcUrls() {
+  const envUrls = process.env.RONIN_RPC_URLS
+    ? process.env.RONIN_RPC_URLS.split(",").map((url) => url.trim()).filter(Boolean)
+    : [];
+  const primaryUrl = process.env.RONIN_RPC_URL ? [process.env.RONIN_RPC_URL.trim()] : [];
+  return Array.from(new Set([...envUrls, ...primaryUrl, ...DEFAULT_RPC_URLS]));
+}
+
+function isRpcFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Too many requests") || message.includes("522") || message.includes("SERVER_ERROR") || message.includes("timeout") || message.includes("Bad Request");
+}
+
 function isAddress(value: string | null | undefined) {
   return !!value && value.startsWith("0x") && value.length === 42;
 }
@@ -62,17 +84,17 @@ function humanPriceToken1PerToken0(sqrtPriceX96: bigint, decimals0: number, deci
   return rawPrice * 10 ** decimals0 / 10 ** decimals1;
 }
 
-async function quoteV2(token: any, settings: any, provider: JsonRpcProvider) {
+async function quoteV2(token: any, settings: any, provider: JsonRpcProvider, rpcUrl: string) {
   const pairAddress = requireAddress(token.pairAddress, "V2 pair address");
   const baseTokenAddress = requireAddress(token.baseTokenAddress, "base token address. Add it in /tokens before quoting");
   const tokenAddressConfig = requireAddress(token.contractAddress, "token contract address");
 
   const pair = new Contract(pairAddress, V2_PAIR_ABI, provider);
-  const [token0, token1, reserves] = await Promise.all([
-    pair.token0(),
-    pair.token1(),
-    pair.getReserves(),
-  ]);
+  const token0 = await pair.token0();
+  await sleep(150);
+  const token1 = await pair.token1();
+  await sleep(150);
+  const reserves = await pair.getReserves();
 
   const tokenAddress = tokenAddressConfig.toLowerCase();
   const baseAddress = baseTokenAddress.toLowerCase();
@@ -81,10 +103,9 @@ async function quoteV2(token: any, settings: any, provider: JsonRpcProvider) {
 
   const tokenContract = new Contract(tokenAddressConfig, ERC20_ABI, provider);
   const baseContract = new Contract(baseTokenAddress, ERC20_ABI, provider);
-  const [chainTokenDecimals, baseDecimals] = await Promise.all([
-    tokenContract.decimals(),
-    baseContract.decimals(),
-  ]);
+  const chainTokenDecimals = await tokenContract.decimals();
+  await sleep(150);
+  const baseDecimals = await baseContract.decimals();
 
   let reserveTokenRaw;
   let reserveBaseRaw;
@@ -119,7 +140,7 @@ async function quoteV2(token: any, settings: any, provider: JsonRpcProvider) {
       priceImpactPct: buyImpact,
       roundTripImpactPct: roundTripImpact,
       liquidityUsd: baseReserve * 2,
-      quoteSource: "KATANA_V2_PAIR_RESERVES",
+      quoteSource: `KATANA_V2_PAIR_RESERVES:${rpcUrl}`,
       confidence,
     },
   });
@@ -140,12 +161,13 @@ async function quoteV2(token: any, settings: any, provider: JsonRpcProvider) {
       estimatedSellBackBase: sellBackBase,
       liquidityApproxBase: baseReserve * 2,
       confidence,
+      rpcUrl,
     },
     message: "V2 quote calculated from pair reserves.",
   };
 }
 
-async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
+async function quoteV3(token: any, settings: any, provider: JsonRpcProvider, rpcUrl: string) {
   const quoterAddress = requireAddress(process.env.KATANA_V3_QUOTER_ADDRESS || null, "KATANA_V3_QUOTER_ADDRESS environment variable. Add the verified Ronin Katana V3 quoter address in Render before quoting V3 pools");
   const poolAddress = requireAddress(token.pairAddress, "V3 pool address");
   const baseTokenAddress = requireAddress(token.baseTokenAddress, "base token address. Add it in /tokens before quoting");
@@ -160,15 +182,19 @@ async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
   const tokenContract = new Contract(tokenAddressConfig, ERC20_ABI, provider);
   const baseContract = new Contract(baseTokenAddress, ERC20_ABI, provider);
 
-  const [poolToken0, poolToken1, poolFee, poolLiquidity, slot0, chainTokenDecimals, baseDecimals] = await Promise.all([
-    pool.token0(),
-    pool.token1(),
-    pool.fee(),
-    pool.liquidity(),
-    pool.slot0(),
-    tokenContract.decimals(),
-    baseContract.decimals(),
-  ]);
+  const poolToken0 = await pool.token0();
+  await sleep(150);
+  const poolToken1 = await pool.token1();
+  await sleep(150);
+  const poolFee = await pool.fee();
+  await sleep(150);
+  const poolLiquidity = await pool.liquidity();
+  await sleep(150);
+  const slot0 = await pool.slot0();
+  await sleep(150);
+  const chainTokenDecimals = await tokenContract.decimals();
+  await sleep(150);
+  const baseDecimals = await baseContract.decimals();
 
   const tokenAddress = tokenAddressConfig.toLowerCase();
   const baseAddress = baseTokenAddress.toLowerCase();
@@ -192,6 +218,7 @@ async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
     fee: Number(token.feeTier),
     sqrtPriceLimitX96: 0,
   });
+  await sleep(150);
 
   const amountOutToken = Number(formatUnits(buyQuote.amountOut, Number(chainTokenDecimals)));
 
@@ -223,7 +250,7 @@ async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
       priceImpactPct: buyImpact,
       roundTripImpactPct: roundTripImpact,
       liquidityUsd: 0,
-      quoteSource: "KATANA_V3_QUOTER",
+      quoteSource: `KATANA_V3_QUOTER:${rpcUrl}`,
       confidence,
     },
   });
@@ -247,12 +274,13 @@ async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
       poolFee: Number(poolFee),
       initializedTicksCrossed: Number(buyQuote.initializedTicksCrossed),
       gasEstimate: Number(buyQuote.gasEstimate),
+      rpcUrl,
     },
     message: "V3 quote calculated with QuoterV2. Liquidity uses V3 active liquidity, not simple reserves.",
   };
 }
 
-async function quoteToken(token: any, settings: any, provider: JsonRpcProvider) {
+async function quoteTokenWithProvider(token: any, settings: any, provider: JsonRpcProvider, rpcUrl: string) {
   if (!token.isActive) {
     return { ok: false, token, message: "Token inactive.", metrics: null };
   }
@@ -262,20 +290,38 @@ async function quoteToken(token: any, settings: any, provider: JsonRpcProvider) 
   }
 
   if (token.poolType === "KATANA_V2") {
-    return quoteV2(token, settings, provider);
+    return quoteV2(token, settings, provider, rpcUrl);
   }
 
   if (token.poolType === "KATANA_V3") {
-    return quoteV3(token, settings, provider);
+    return quoteV3(token, settings, provider, rpcUrl);
   }
 
   return { ok: false, token, message: `Unsupported pool type ${token.poolType}.`, metrics: null };
 }
 
+async function quoteToken(token: any, settings: any, rpcUrls: string[], chainId: number) {
+  let lastError: unknown = null;
+
+  for (const rpcUrl of rpcUrls) {
+    const provider = new JsonRpcProvider(rpcUrl, chainId);
+    try {
+      return await quoteTokenWithProvider(token, settings, provider, rpcUrl);
+    } catch (error) {
+      lastError = error;
+      if (!isRpcFailure(error)) {
+        throw error;
+      }
+      await sleep(750);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("All RPC endpoints failed.");
+}
+
 export async function GET() {
-  const rpcUrl = process.env.RONIN_RPC_URL || "https://api.roninchain.com/rpc";
   const chainId = Number(process.env.RONIN_CHAIN_ID || 2020);
-  const provider = new JsonRpcProvider(rpcUrl, chainId);
+  const rpcUrls = getRpcUrls();
 
   const [settings, tokens] = await Promise.all([
     prisma.settings.findUnique({ where: { id: 1 } }),
@@ -286,7 +332,8 @@ export async function GET() {
 
   for (const token of tokens) {
     try {
-      results.push(await quoteToken(token, settings, provider));
+      results.push(await quoteToken(token, settings, rpcUrls, chainId));
+      await sleep(500);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Quote failed.";
       await prisma.riskEvent.create({
@@ -304,13 +351,14 @@ export async function GET() {
     data: {
       level: "info",
       message: "Quote scan completed.",
-      meta: JSON.stringify({ tokenCount: tokens.length, okCount: results.filter((result) => result.ok).length }),
+      meta: JSON.stringify({ tokenCount: tokens.length, okCount: results.filter((result) => result.ok).length, rpcUrls }),
     },
   });
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
     settings,
+    rpcUrls,
     results,
   });
 }
