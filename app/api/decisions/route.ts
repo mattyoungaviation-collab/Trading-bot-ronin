@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const prisma = new PrismaClient();
 
 type DecisionReason = {
@@ -71,7 +74,6 @@ export async function GET() {
   ]);
 
   const botMode = settings?.botMode || "OFF";
-  const minTradeScore = settings?.minTradeScore ?? 70;
   const emergencyStop = settings?.emergencyStop ?? true;
 
   const decisions = await Promise.all(
@@ -140,5 +142,7 @@ export async function GET() {
     generatedAt: new Date().toISOString(),
     settings,
     decisions,
+  }, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
   });
 }
