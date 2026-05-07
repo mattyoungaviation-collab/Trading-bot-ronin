@@ -32,6 +32,13 @@ function isAddress(value: string | null | undefined) {
   return !!value && value.startsWith("0x") && value.length === 42;
 }
 
+function requireAddress(value: string | null | undefined, label: string): string {
+  if (!isAddress(value)) {
+    throw new Error(`Missing or invalid ${label}.`);
+  }
+  return value as string;
+}
+
 function constantProductAmountOut(amountIn: number, reserveIn: number, reserveOut: number, feePct = 0.3) {
   if (amountIn <= 0 || reserveIn <= 0 || reserveOut <= 0) return 0;
   const amountInWithFee = amountIn * (1 - feePct / 100);
@@ -56,27 +63,24 @@ function humanPriceToken1PerToken0(sqrtPriceX96: bigint, decimals0: number, deci
 }
 
 async function quoteV2(token: any, settings: any, provider: JsonRpcProvider) {
-  if (!isAddress(token.pairAddress)) {
-    throw new Error("Missing or invalid V2 pair address.");
-  }
-  if (!isAddress(token.baseTokenAddress)) {
-    throw new Error("Missing base token address. Add it in /tokens before quoting.");
-  }
+  const pairAddress = requireAddress(token.pairAddress, "V2 pair address");
+  const baseTokenAddress = requireAddress(token.baseTokenAddress, "base token address. Add it in /tokens before quoting");
+  const tokenAddressConfig = requireAddress(token.contractAddress, "token contract address");
 
-  const pair = new Contract(token.pairAddress, V2_PAIR_ABI, provider);
+  const pair = new Contract(pairAddress, V2_PAIR_ABI, provider);
   const [token0, token1, reserves] = await Promise.all([
     pair.token0(),
     pair.token1(),
     pair.getReserves(),
   ]);
 
-  const tokenAddress = token.contractAddress.toLowerCase();
-  const baseAddress = token.baseTokenAddress.toLowerCase();
+  const tokenAddress = tokenAddressConfig.toLowerCase();
+  const baseAddress = baseTokenAddress.toLowerCase();
   const token0Lower = String(token0).toLowerCase();
   const token1Lower = String(token1).toLowerCase();
 
-  const tokenContract = new Contract(token.contractAddress, ERC20_ABI, provider);
-  const baseContract = new Contract(token.baseTokenAddress, ERC20_ABI, provider);
+  const tokenContract = new Contract(tokenAddressConfig, ERC20_ABI, provider);
+  const baseContract = new Contract(baseTokenAddress, ERC20_ABI, provider);
   const [chainTokenDecimals, baseDecimals] = await Promise.all([
     tokenContract.decimals(),
     baseContract.decimals(),
@@ -142,25 +146,19 @@ async function quoteV2(token: any, settings: any, provider: JsonRpcProvider) {
 }
 
 async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
-  const quoterAddress = process.env.KATANA_V3_QUOTER_ADDRESS;
+  const quoterAddress = requireAddress(process.env.KATANA_V3_QUOTER_ADDRESS || null, "KATANA_V3_QUOTER_ADDRESS environment variable. Add the verified Ronin Katana V3 quoter address in Render before quoting V3 pools");
+  const poolAddress = requireAddress(token.pairAddress, "V3 pool address");
+  const baseTokenAddress = requireAddress(token.baseTokenAddress, "base token address. Add it in /tokens before quoting");
+  const tokenAddressConfig = requireAddress(token.contractAddress, "token contract address");
 
-  if (!isAddress(quoterAddress)) {
-    throw new Error("Missing KATANA_V3_QUOTER_ADDRESS environment variable. Add the verified Ronin Katana V3 quoter address in Render before quoting V3 pools.");
-  }
-  if (!isAddress(token.pairAddress)) {
-    throw new Error("Missing or invalid V3 pool address.");
-  }
-  if (!isAddress(token.baseTokenAddress)) {
-    throw new Error("Missing base token address. Add it in /tokens before quoting.");
-  }
   if (!token.feeTier) {
     throw new Error("Missing V3 fee tier. Add feeTier in /tokens, for example 500, 3000, or 10000 if that matches the pool.");
   }
 
-  const pool = new Contract(token.pairAddress, V3_POOL_ABI, provider);
+  const pool = new Contract(poolAddress, V3_POOL_ABI, provider);
   const quoter = new Contract(quoterAddress, V3_QUOTER_ABI, provider);
-  const tokenContract = new Contract(token.contractAddress, ERC20_ABI, provider);
-  const baseContract = new Contract(token.baseTokenAddress, ERC20_ABI, provider);
+  const tokenContract = new Contract(tokenAddressConfig, ERC20_ABI, provider);
+  const baseContract = new Contract(baseTokenAddress, ERC20_ABI, provider);
 
   const [poolToken0, poolToken1, poolFee, poolLiquidity, slot0, chainTokenDecimals, baseDecimals] = await Promise.all([
     pool.token0(),
@@ -172,8 +170,8 @@ async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
     baseContract.decimals(),
   ]);
 
-  const tokenAddress = token.contractAddress.toLowerCase();
-  const baseAddress = token.baseTokenAddress.toLowerCase();
+  const tokenAddress = tokenAddressConfig.toLowerCase();
+  const baseAddress = baseTokenAddress.toLowerCase();
   const token0Lower = String(poolToken0).toLowerCase();
   const token1Lower = String(poolToken1).toLowerCase();
 
@@ -188,8 +186,8 @@ async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
   const amountInBase = Number(settings?.maxTradeSizeUsd || 25);
   const amountInRaw = parseUnits(String(amountInBase), Number(baseDecimals));
   const buyQuote = await quoter.quoteExactInputSingle.staticCall({
-    tokenIn: token.baseTokenAddress,
-    tokenOut: token.contractAddress,
+    tokenIn: baseTokenAddress,
+    tokenOut: tokenAddressConfig,
     amountIn: amountInRaw,
     fee: Number(token.feeTier),
     sqrtPriceLimitX96: 0,
@@ -199,8 +197,8 @@ async function quoteV3(token: any, settings: any, provider: JsonRpcProvider) {
 
   const sellAmountRaw = parseUnits(String(amountOutToken), Number(chainTokenDecimals));
   const sellQuote = await quoter.quoteExactInputSingle.staticCall({
-    tokenIn: token.contractAddress,
-    tokenOut: token.baseTokenAddress,
+    tokenIn: tokenAddressConfig,
+    tokenOut: baseTokenAddress,
     amountIn: sellAmountRaw,
     fee: Number(token.feeTier),
     sqrtPriceLimitX96: 0,
