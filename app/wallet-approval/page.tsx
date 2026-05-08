@@ -13,8 +13,16 @@ const ERC20_ABI = [
 declare global {
   interface Window {
     ethereum?: any;
+    ronin?: any;
   }
 }
+
+type WalletProviderOption = {
+  id: string;
+  name: string;
+  provider: any;
+  preferred: boolean;
+};
 
 type ApprovalData = {
   ready: boolean;
@@ -42,6 +50,72 @@ function num(value: string | number, digits = 8) {
   return Number(parsed || 0).toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
+function providerName(provider: any, fallback: string) {
+  if (!provider) return fallback;
+  if (provider.isRonin || provider.isRoninWallet) return "Ronin Wallet";
+  if (provider.isMetaMask) return "MetaMask";
+  if (provider.isCoinbaseWallet) return "Coinbase Wallet";
+  return fallback;
+}
+
+function isRoninProvider(provider: any) {
+  return !!provider && (provider.isRonin || provider.isRoninWallet || String(provider.name || "").toLowerCase().includes("ronin"));
+}
+
+function dedupeProviders(providers: WalletProviderOption[]) {
+  const seen = new Set<any>();
+  return providers.filter((option) => {
+    if (!option.provider || seen.has(option.provider)) return false;
+    seen.add(option.provider);
+    return true;
+  });
+}
+
+function findInjectedProviders(): WalletProviderOption[] {
+  const found: WalletProviderOption[] = [];
+  const roninCandidate = window.ronin?.provider || window.ronin?.ethereum || window.ronin;
+
+  if (roninCandidate?.request) {
+    found.push({ id: "ronin-direct", name: "Ronin Wallet", provider: roninCandidate, preferred: true });
+  }
+
+  const ethereum = window.ethereum;
+  const providerList = Array.isArray(ethereum?.providers) ? ethereum.providers : ethereum ? [ethereum] : [];
+
+  providerList.forEach((provider: any, index: number) => {
+    const ronin = isRoninProvider(provider);
+    found.push({
+      id: ronin ? `ronin-${index}` : `wallet-${index}`,
+      name: providerName(provider, ronin ? "Ronin Wallet" : `Injected Wallet ${index + 1}`),
+      provider,
+      preferred: ronin,
+    });
+  });
+
+  return dedupeProviders(found).sort((a, b) => Number(b.preferred) - Number(a.preferred));
+}
+
+async function switchToRonin(provider: any) {
+  try {
+    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x7e4" }] });
+  } catch (error: any) {
+    if (error?.code === 4902) {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [{
+          chainId: "0x7e4",
+          chainName: "Ronin Mainnet",
+          nativeCurrency: { name: "RON", symbol: "RON", decimals: 18 },
+          rpcUrls: ["https://api.roninchain.com/rpc"],
+          blockExplorerUrls: ["https://app.roninchain.com"],
+        }],
+      });
+      return;
+    }
+    throw error;
+  }
+}
+
 export default function WalletApprovalPage() {
   const [approvalData, setApprovalData] = useState<ApprovalData | null>(null);
   const [account, setAccount] = useState<string | null>(null);
@@ -52,6 +126,10 @@ export default function WalletApprovalPage() {
   const [status, setStatus] = useState("Load approval data, then connect your wallet.");
   const [loading, setLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [walletProviders, setWalletProviders] = useState<WalletProviderOption[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
+  const [activeProvider, setActiveProvider] = useState<any>(null);
+  const activeProviderName = walletProviders.find((option) => option.id === selectedProviderId)?.name || "None";
 
   async function loadApprovalData() {
     setLoading(true);
@@ -68,19 +146,46 @@ export default function WalletApprovalPage() {
     }
   }
 
+  function detectWallets() {
+    const providers = findInjectedProviders();
+    setWalletProviders(providers);
+    const preferred = providers.find((option) => option.preferred) || providers[0];
+    if (preferred) {
+      setSelectedProviderId(preferred.id);
+      setActiveProvider(preferred.provider);
+      setStatus(`Detected ${providers.length} wallet provider(s). Selected ${preferred.name}.`);
+    } else {
+      setStatus("No injected wallet found. Install or unlock Ronin Wallet, then refresh this page.");
+    }
+  }
+
+  function selectProvider(id: string) {
+    const option = walletProviders.find((provider) => provider.id === id);
+    setSelectedProviderId(id);
+    setActiveProvider(option?.provider || null);
+    setAccount(null);
+    setChainId(null);
+    setAllowance(null);
+    setAllowanceHuman(null);
+    setApprovalNeeded(null);
+    setStatus(option ? `Selected ${option.name}.` : "Wallet provider cleared.");
+  }
+
   async function connectWallet() {
-    if (!window.ethereum) {
-      setStatus("No injected wallet found. Open this page in a browser with Ronin Wallet or another EVM wallet installed.");
+    const provider = activeProvider;
+    if (!provider?.request) {
+      setStatus("No selected provider. Click Detect Wallets first, then choose Ronin Wallet.");
       return;
     }
 
     setLoading(true);
     try {
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-      const activeChain = await window.ethereum.request({ method: "eth_chainId" });
+      await switchToRonin(provider);
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      const activeChain = await provider.request({ method: "eth_chainId" });
       setAccount(accounts[0]);
       setChainId(activeChain);
-      setStatus(`Connected ${short(accounts[0])}.`);
+      setStatus(`Connected ${short(accounts[0])} with ${activeProviderName}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Wallet connection failed.");
     } finally {
@@ -89,14 +194,14 @@ export default function WalletApprovalPage() {
   }
 
   async function checkAllowance() {
-    if (!window.ethereum || !account || !approvalData?.approval) {
+    if (!activeProvider || !account || !approvalData?.approval) {
       setStatus("Connect wallet and load approval data first.");
       return;
     }
 
     setLoading(true);
     try {
-      const provider = new BrowserProvider(window.ethereum);
+      const provider = new BrowserProvider(activeProvider);
       const token = new Contract(approvalData.approval.tokenAddress, ERC20_ABI, provider);
       const decimals = Number(await token.decimals());
       const currentAllowance = await token.allowance(account, approvalData.approval.spenderAddress);
@@ -113,7 +218,7 @@ export default function WalletApprovalPage() {
   }
 
   async function requestExactApproval() {
-    if (!window.ethereum || !account || !approvalData?.approval) {
+    if (!activeProvider || !account || !approvalData?.approval) {
       setStatus("Connect wallet and load approval data first.");
       return;
     }
@@ -123,7 +228,7 @@ export default function WalletApprovalPage() {
 
     setLoading(true);
     try {
-      const provider = new BrowserProvider(window.ethereum);
+      const provider = new BrowserProvider(activeProvider);
       const signer = await provider.getSigner();
       const token = new Contract(approvalData.approval.tokenAddress, ERC20_ABI, signer);
       const tx = await token.approve(approvalData.approval.spenderAddress, BigInt(approvalData.approval.amountRaw));
@@ -134,7 +239,7 @@ export default function WalletApprovalPage() {
         method: "POST",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ txHash: tx.hash, side: "APPROVAL", note: "wallet exact approval" }),
+        body: JSON.stringify({ txHash: tx.hash, side: "APPROVAL", note: `wallet exact approval via ${activeProviderName}` }),
       });
 
       await tx.wait();
@@ -149,6 +254,7 @@ export default function WalletApprovalPage() {
 
   useEffect(() => {
     loadApprovalData();
+    setTimeout(detectWallets, 500);
   }, []);
 
   return (
@@ -156,7 +262,7 @@ export default function WalletApprovalPage() {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <div>
           <h1 style={{ marginBottom: 8 }}>Wallet Approval</h1>
-          <p style={{ marginTop: 0, color: "#555" }}>Connect your wallet and approve the exact quote amount. No backend private key. No unlimited approval.</p>
+          <p style={{ marginTop: 0, color: "#555" }}>Connect Ronin Wallet when available and approve the exact quote amount. No backend private key. No unlimited approval.</p>
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <a href="/" style={linkStyle}>Home</a>
@@ -164,7 +270,8 @@ export default function WalletApprovalPage() {
           <a href="/tx-builder" style={linkStyle}>Swap Builder</a>
           <a href="/live-tracker" style={linkStyle}>Tracker</a>
           <button onClick={loadApprovalData} disabled={loading} style={buttonStyle}>Refresh Data</button>
-          <button onClick={connectWallet} disabled={loading} style={buttonStyle}>Connect Wallet</button>
+          <button onClick={detectWallets} disabled={loading} style={buttonStyle}>Detect Wallets</button>
+          <button onClick={connectWallet} disabled={loading || !activeProvider} style={buttonStyle}>Connect Selected</button>
         </div>
       </div>
 
@@ -173,8 +280,20 @@ export default function WalletApprovalPage() {
         {txHash ? <p style={{ overflowWrap: "anywhere" }}><strong>Last tx:</strong> {txHash}</p> : null}
       </section>
 
+      <section style={{ border: "1px solid #ddd", borderRadius: 14, padding: 18, marginBottom: 24 }}>
+        <h2 style={{ marginTop: 0 }}>Wallet Provider</h2>
+        <p style={{ color: "#555" }}>Ronin Wallet is preferred. If MetaMask opens, select the Ronin provider here or disable MetaMask for this site.</p>
+        <select value={selectedProviderId} onChange={(event) => selectProvider(event.target.value)} style={inputStyle}>
+          <option value="">No provider selected</option>
+          {walletProviders.map((provider) => (
+            <option key={provider.id} value={provider.id}>{provider.preferred ? "Preferred: " : ""}{provider.name}</option>
+          ))}
+        </select>
+      </section>
+
       <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 16, marginBottom: 24 }}>
-        <Card title="Wallet" value={account ? short(account) : "Not connected"} detail={account || "Connect wallet first"} danger={!account} />
+        <Card title="Provider" value={activeProviderName} detail={`${walletProviders.length} detected`} danger={!activeProvider} />
+        <Card title="Wallet" value={account ? short(account) : "Not connected"} detail={account || "Connect selected provider first"} danger={!account} />
         <Card title="Chain" value={chainId || "Unknown"} detail="Ronin mainnet should be 0x7e4" danger={!!chainId && chainId !== "0x7e4"} />
         <Card title="Approval Data" value={approvalData?.ready ? "Ready" : "Blocked"} detail={`${approvalData?.blockers.length || 0} blocker(s)`} danger={!approvalData?.ready} />
         <Card title="Allowance" value={allowanceHuman ? num(allowanceHuman, 6) : "Unchecked"} detail={approvalNeeded === null ? "Check allowance" : approvalNeeded ? "Approval needed" : "Enough allowance"} danger={approvalNeeded === true} />
@@ -233,6 +352,16 @@ function Mini({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  display: "block",
+  marginTop: 8,
+  width: "100%",
+  padding: 10,
+  border: "1px solid #ccc",
+  borderRadius: 10,
+  boxSizing: "border-box",
+};
 
 const buttonStyle: React.CSSProperties = {
   padding: "10px 14px",
