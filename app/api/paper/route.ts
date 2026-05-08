@@ -13,19 +13,18 @@ function quoteEntryPrice(quote: { amountIn: string; amountOut: string }) {
   return amountIn / amountOut;
 }
 
+function tradeTokenQty(trade: { entryPrice: number; qty: number }) {
+  if (!trade.entryPrice || !trade.qty) return 0;
+  return trade.qty / trade.entryPrice;
+}
+
 function tradePnl(trade: { entryPrice: number; qty: number }, latestPrice: number) {
   if (!trade.entryPrice || !latestPrice) return 0;
-  const tokenQty = trade.qty / trade.entryPrice;
+  const tokenQty = tradeTokenQty(trade);
   return tokenQty * latestPrice - trade.qty;
 }
 
-export async function GET() {
-  const [settings, tokens, paperTrades] = await Promise.all([
-    prisma.settings.findUnique({ where: { id: 1 } }),
-    prisma.token.findMany({ orderBy: [{ isActive: "desc" }, { symbol: "asc" }] }),
-    prisma.paperTrade.findMany({ orderBy: { createdAt: "desc" }, take: 50 }),
-  ]);
-
+async function enrichTrades(settings: any, tokens: any[], paperTrades: any[]) {
   const tokenMap = new Map(tokens.map((token) => [token.id, token]));
   const latestQuotes = await prisma.quote.findMany({
     where: { tokenId: { in: tokens.map((token) => token.id) } },
@@ -37,11 +36,12 @@ export async function GET() {
     if (!latestQuoteMap.has(quote.tokenId)) latestQuoteMap.set(quote.tokenId, quote);
   }
 
-  const enrichedTrades = await Promise.all(paperTrades.map(async (trade) => {
+  return Promise.all(paperTrades.map(async (trade) => {
     const latestQuote = latestQuoteMap.get(trade.tokenId) || null;
     const currentPrice = latestQuote ? quoteEntryPrice(latestQuote) : trade.entryPrice;
     const currentPnl = trade.status === "OPEN" ? tradePnl(trade, currentPrice) : trade.pnl;
     const currentPnlPct = trade.qty > 0 ? (currentPnl / trade.qty) * 100 : 0;
+    const tokenQty = tradeTokenQty(trade);
 
     let updatedTrade = trade;
     if (trade.status === "OPEN" && settings && latestQuote) {
@@ -60,7 +60,7 @@ export async function GET() {
         await prisma.botLog.create({
           data: {
             level: shouldTakeProfit ? "info" : "warning",
-            message: "Closed paper trade.",
+            message: "Closed paper trade automatically.",
             meta: JSON.stringify({ tradeId: trade.id, tokenId: trade.tokenId, reason: updatedTrade.status, pnl: currentPnl, pnlPct: currentPnlPct }),
           },
         });
@@ -71,11 +71,23 @@ export async function GET() {
       ...updatedTrade,
       token: tokenMap.get(trade.tokenId) || null,
       latestQuote,
+      tokenQty,
       currentPrice,
+      currentValue: tokenQty * currentPrice,
       currentPnl: updatedTrade.status === "OPEN" ? currentPnl : updatedTrade.pnl,
       currentPnlPct,
     };
   }));
+}
+
+export async function GET() {
+  const [settings, tokens, paperTrades] = await Promise.all([
+    prisma.settings.findUnique({ where: { id: 1 } }),
+    prisma.token.findMany({ orderBy: [{ isActive: "desc" }, { symbol: "asc" }] }),
+    prisma.paperTrade.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
+  ]);
+
+  const enrichedTrades = await enrichTrades(settings, tokens, paperTrades);
 
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
@@ -177,6 +189,69 @@ export async function POST() {
   }
 
   return NextResponse.json({ created, rejected }, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
+  });
+}
+
+export async function PATCH(request: Request) {
+  const body = await request.json();
+  const action = String(body.action || "");
+
+  if (action === "close") {
+    const tradeId = Number(body.tradeId);
+    if (!Number.isFinite(tradeId)) {
+      return NextResponse.json({ error: "Invalid tradeId." }, { status: 400 });
+    }
+
+    const trade = await prisma.paperTrade.findUnique({ where: { id: tradeId } });
+    if (!trade) {
+      return NextResponse.json({ error: "Paper trade not found." }, { status: 404 });
+    }
+
+    if (trade.status !== "OPEN") {
+      return NextResponse.json({ error: "Only OPEN paper trades can be manually closed." }, { status: 400 });
+    }
+
+    const latestQuote = await prisma.quote.findFirst({ where: { tokenId: trade.tokenId }, orderBy: { createdAt: "desc" } });
+    const currentPrice = latestQuote ? quoteEntryPrice(latestQuote) : trade.entryPrice;
+    const pnl = tradePnl(trade, currentPrice);
+
+    const updated = await prisma.paperTrade.update({
+      where: { id: trade.id },
+      data: {
+        status: "CLOSED_MANUAL",
+        pnl,
+      },
+    });
+
+    await prisma.botLog.create({
+      data: {
+        level: "info",
+        message: "Manually closed paper trade.",
+        meta: JSON.stringify({ tradeId: trade.id, tokenId: trade.tokenId, pnl }),
+      },
+    });
+
+    return NextResponse.json({ trade: updated }, {
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    });
+  }
+
+  return NextResponse.json({ error: "Unsupported paper action." }, { status: 400 });
+}
+
+export async function DELETE() {
+  const deleted = await prisma.paperTrade.deleteMany({});
+
+  await prisma.botLog.create({
+    data: {
+      level: "warning",
+      message: "Reset all paper trades.",
+      meta: JSON.stringify({ deletedCount: deleted.count }),
+    },
+  });
+
+  return NextResponse.json({ ok: true, deletedCount: deleted.count }, {
     headers: { "Cache-Control": "no-store, max-age=0" },
   });
 }
